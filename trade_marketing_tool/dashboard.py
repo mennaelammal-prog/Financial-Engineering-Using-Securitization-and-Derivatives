@@ -182,25 +182,41 @@ with tab_signals:
     sig_ticker = st.text_input("Ticker", value="AAPL", key="sig_ticker").upper()
     sig_period = st.selectbox("History window", ["1y", "2y", "5y"], index=1, key="sig_period")
 
+    c1, c2 = st.columns(2)
+    require_confirmation = c1.checkbox(
+        "Require RSI/MACD confirmation to enter", value=True, key="sig_confirm"
+    )
+    use_stop_loss = c2.checkbox("Use trailing stop", value=True, key="sig_use_stop")
+    stop_loss_pct = (
+        st.slider("Trailing stop %", min_value=2, max_value=20, value=8, key="sig_stop_pct") / 100
+        if use_stop_loss
+        else None
+    )
+
     if st.button("Run signal backtest"):
         try:
             with st.spinner(f"Fetching {sig_ticker} and running backtest..."):
                 ohlc = single_ticker_ohlcv(sig_ticker, period=sig_period)
-                signaled = generate_signals(ohlc)
-                result = backtest(signaled)
+                signaled = generate_signals(ohlc, require_confirmation=require_confirmation)
+                result = backtest(signaled, stop_loss_pct=stop_loss_pct)
 
             c1, c2, c3 = st.columns(3)
             c1.metric("Strategy return", f"{result.total_return:.2%}")
             c2.metric("Buy & hold return", f"{result.buy_hold_return:.2%}")
             c3.metric("Sharpe ratio", f"{result.sharpe_ratio:.2f}")
-            c4, c5 = st.columns(2)
+            c4, c5, c6 = st.columns(3)
             c4.metric("Max drawdown", f"{result.max_drawdown:.2%}")
-            c5.metric("Win rate (active days)", f"{result.win_rate:.2%}")
+            c5.metric("Win rate (per day)", f"{result.win_rate:.2%}")
+            c6.metric("Win rate (per trade)", f"{result.trade_win_rate:.2%}", help=f"{result.n_trades} trades taken")
 
             st.line_chart(result.equity_curve)
             st.caption(
-                "Rule-based signal: SMA50/SMA200 trend filter, confirmed by RSI "
-                "and MACD crossovers. Educational/research use — not investment advice."
+                "Rule-based signal: SMA50/SMA200 trend filter" +
+                (", confirmed by RSI/MACD crossovers" if require_confirmation else "") +
+                (f", with an {stop_loss_pct:.0%} trailing stop" if stop_loss_pct else "") +
+                ". Educational/research use — not investment advice. "
+                "Per-day win rate is naturally low for trend-following even when "
+                "profitable; per-trade win rate is usually the more honest read."
             )
         except DataFetchError as exc:
             st.error(str(exc))

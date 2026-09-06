@@ -54,7 +54,7 @@ Opens a browser tab with seven tabs:
 1. **TradingView Chart** — candlesticks + SMA/EMA/Bollinger overlays, volume, RSI, MACD, zoom/pan/crosshair.
 2. **Portfolio Sensitivity** — enter holdings as `TICKER:WEIGHT`, get weighted portfolio Beta/Alpha/volatility vs. an index (e.g. `^GSPC`, `^AXJO`), plus a Beta-implied market-shock scenario table.
 3. **Options Pricer** — Black-Scholes price + Delta/Gamma/Vega/Theta/Rho for a call or put.
-4. **Trade Signals** — SMA50/200 trend filter confirmed by RSI/MACD crossovers, backtested against buy-and-hold with Sharpe ratio, max drawdown, win rate.
+4. **Trade Signals** — SMA50/200 trend filter confirmed by RSI/MACD crossovers (optional), with an optional trailing stop, backtested against buy-and-hold with Sharpe ratio, max drawdown, and both per-day and per-trade win rate.
 5. **Promotion Impact** — paired or independent-samples t-test on before/after or campaign/control outlet sales, with uplift %, significance, and a comparison chart.
 6. **Shelf/Price Sensitivity** — Pearson correlation + OLS regression of sales against shelf space, price, or any trade lever, with a scatter + trendline and a what-if predictor.
 7. **Outlet Segmentation** — PCA (factor analysis) + K-Means clustering of outlets/distributors into Low/Mid/High-Value segments, with a cluster scatter plot.
@@ -75,7 +75,10 @@ python -m trade_marketing_tool.cli chart AAPL --period 1y --out aapl_chart.html
 python -m trade_marketing_tool.cli option --spot 190 --strike 195 --days 30 --rate 0.05 --vol 0.28 --type call
 
 # Backtest the built-in trend/RSI/MACD signal vs. buy & hold
+# (RSI/MACD entry confirmation + an 8% trailing stop are on by default)
 python -m trade_marketing_tool.cli backtest AAPL --period 2y
+python -m trade_marketing_tool.cli backtest AAPL --period 2y --stop-loss 0.05
+python -m trade_marketing_tool.cli backtest AAPL --period 2y --no-confirmation --no-stop-loss
 
 # Promotion impact: paired before/after t-test (or --control for an independent-samples test)
 python -m trade_marketing_tool.cli promo-ttest --csv outlets.csv --before before_sales --after after_sales

@@ -81,8 +81,9 @@ def cmd_option(args: argparse.Namespace) -> None:
 
 def cmd_backtest(args: argparse.Namespace) -> None:
     ohlc = single_ticker_ohlcv(args.ticker, period=args.period, interval="1d")
-    signaled = generate_signals(ohlc)
-    result = backtest(signaled)
+    signaled = generate_signals(ohlc, require_confirmation=not args.no_confirmation)
+    stop_loss = None if args.no_stop_loss else args.stop_loss
+    result = backtest(signaled, stop_loss_pct=stop_loss)
     print(f"Backtest: {args.ticker} ({args.period})")
     print(f"  Strategy total return:    {result.total_return:.2%}")
     print(f"  Buy & hold total return:  {result.buy_hold_return:.2%}")
@@ -91,6 +92,8 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     print(f"  Sharpe ratio:             {result.sharpe_ratio:.2f}")
     print(f"  Max drawdown:             {result.max_drawdown:.2%}")
     print(f"  Win rate (active days):   {result.win_rate:.2%}")
+    print(f"  Trades taken:             {result.n_trades}")
+    print(f"  Win rate (per trade):     {result.trade_win_rate:.2%}")
 
 
 def cmd_promo_ttest(args: argparse.Namespace) -> None:
@@ -155,6 +158,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_bt = sub.add_parser("backtest", help="Backtest the built-in rule-based signal vs buy & hold")
     p_bt.add_argument("ticker")
     p_bt.add_argument("--period", default="2y")
+    p_bt.add_argument(
+        "--stop-loss", dest="stop_loss", type=float, default=0.08,
+        help="Trailing stop fraction, e.g. 0.08 for 8%% (default 0.08)",
+    )
+    p_bt.add_argument(
+        "--no-stop-loss", action="store_true", help="Disable the trailing stop entirely"
+    )
+    p_bt.add_argument(
+        "--no-confirmation", action="store_true",
+        help="Enter on the raw SMA50/200 trend regime without requiring an RSI/MACD confirmation bar",
+    )
     p_bt.set_defaults(func=cmd_backtest)
 
     p_promo = sub.add_parser(
