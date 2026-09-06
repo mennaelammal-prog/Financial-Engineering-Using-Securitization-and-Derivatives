@@ -182,14 +182,31 @@ with tab_signals:
     sig_ticker = st.text_input("Ticker", value="AAPL", key="sig_ticker").upper()
     sig_period = st.selectbox("History window", ["1y", "2y", "5y"], index=1, key="sig_period")
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     require_confirmation = c1.checkbox(
         "Require RSI/MACD confirmation to enter", value=True, key="sig_confirm"
     )
     use_stop_loss = c2.checkbox("Use trailing stop", value=True, key="sig_use_stop")
+    use_take_profit = c3.checkbox(
+        "Use take-profit target",
+        value=False,
+        key="sig_use_tp",
+        help=(
+            "Off by default: across many synthetic backtests this barely moved the "
+            "per-day win rate while cutting average total return noticeably, since it "
+            "caps the rare large trend run for little benefit."
+        ),
+    )
+
+    c4, c5 = st.columns(2)
     stop_loss_pct = (
-        st.slider("Trailing stop %", min_value=2, max_value=20, value=8, key="sig_stop_pct") / 100
+        c4.slider("Trailing stop %", min_value=2, max_value=20, value=8, key="sig_stop_pct") / 100
         if use_stop_loss
+        else None
+    )
+    take_profit_pct = (
+        c5.slider("Take-profit target %", min_value=5, max_value=50, value=15, key="sig_tp_pct") / 100
+        if use_take_profit
         else None
     )
 
@@ -198,25 +215,36 @@ with tab_signals:
             with st.spinner(f"Fetching {sig_ticker} and running backtest..."):
                 ohlc = single_ticker_ohlcv(sig_ticker, period=sig_period)
                 signaled = generate_signals(ohlc, require_confirmation=require_confirmation)
-                result = backtest(signaled, stop_loss_pct=stop_loss_pct)
+                result = backtest(
+                    signaled, stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct
+                )
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Strategy return", f"{result.total_return:.2%}")
-            c2.metric("Buy & hold return", f"{result.buy_hold_return:.2%}")
-            c3.metric("Sharpe ratio", f"{result.sharpe_ratio:.2f}")
-            c4, c5, c6 = st.columns(3)
-            c4.metric("Max drawdown", f"{result.max_drawdown:.2%}")
-            c5.metric("Win rate (per day)", f"{result.win_rate:.2%}")
-            c6.metric("Win rate (per trade)", f"{result.trade_win_rate:.2%}", help=f"{result.n_trades} trades taken")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Strategy return", f"{result.total_return:.2%}")
+            m2.metric("Buy & hold return", f"{result.buy_hold_return:.2%}")
+            m3.metric("Sharpe ratio", f"{result.sharpe_ratio:.2f}")
+            m4, m5, m6 = st.columns(3)
+            m4.metric("Max drawdown", f"{result.max_drawdown:.2%}")
+            m5.metric("Win rate (per day)", f"{result.win_rate:.2%}")
+            m6.metric("Win rate (per trade)", f"{result.trade_win_rate:.2%}", help=f"{result.n_trades} trades taken")
 
             st.line_chart(result.equity_curve)
+            exit_notes = []
+            if require_confirmation:
+                exit_notes.append("confirmed by RSI/MACD crossovers")
+            if stop_loss_pct:
+                exit_notes.append(f"an {stop_loss_pct:.0%} trailing stop")
+            if take_profit_pct:
+                exit_notes.append(f"a {take_profit_pct:.0%} take-profit target")
             st.caption(
-                "Rule-based signal: SMA50/SMA200 trend filter" +
-                (", confirmed by RSI/MACD crossovers" if require_confirmation else "") +
-                (f", with an {stop_loss_pct:.0%} trailing stop" if stop_loss_pct else "") +
-                ". Educational/research use — not investment advice. "
+                "Rule-based signal: SMA50/SMA200 trend filter"
+                + (", " + ", ".join(exit_notes) if exit_notes else "")
+                + ". Educational/research use — not investment advice. "
                 "Per-day win rate is naturally low for trend-following even when "
-                "profitable; per-trade win rate is usually the more honest read."
+                "profitable; per-trade win rate is usually the more honest read. "
+                "The take-profit target is the main lever for the per-day figure "
+                "specifically, at the cost of capping the rare trade that runs "
+                "much further."
             )
         except DataFetchError as exc:
             st.error(str(exc))

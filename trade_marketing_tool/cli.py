@@ -83,7 +83,7 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     ohlc = single_ticker_ohlcv(args.ticker, period=args.period, interval="1d")
     signaled = generate_signals(ohlc, require_confirmation=not args.no_confirmation)
     stop_loss = None if args.no_stop_loss else args.stop_loss
-    result = backtest(signaled, stop_loss_pct=stop_loss)
+    result = backtest(signaled, stop_loss_pct=stop_loss, take_profit_pct=args.take_profit)
     print(f"Backtest: {args.ticker} ({args.period})")
     print(f"  Strategy total return:    {result.total_return:.2%}")
     print(f"  Buy & hold total return:  {result.buy_hold_return:.2%}")
@@ -168,6 +168,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_bt.add_argument(
         "--no-confirmation", action="store_true",
         help="Enter on the raw SMA50/200 trend regime without requiring an RSI/MACD confirmation bar",
+    )
+    p_bt.add_argument(
+        "--take-profit", dest="take_profit", type=float, default=None,
+        help=(
+            "Take-profit target fraction above entry, e.g. 0.15 for 15%% "
+            "(disabled by default — across many synthetic backtests it barely moved the "
+            "per-day win rate while cutting average total return, since it caps trend "
+            "runs for little benefit; opt in deliberately, don't assume it helps)"
+        ),
     )
     p_bt.set_defaults(func=cmd_backtest)
 

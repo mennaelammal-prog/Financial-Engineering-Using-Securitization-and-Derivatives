@@ -85,20 +85,28 @@ def generate_signals(ohlc: pd.DataFrame, require_confirmation: bool = True) -> p
     return df
 
 
-def _apply_trailing_stop(
-    close: pd.Series, raw_position: pd.Series, stop_loss_pct: float
+def _apply_exit_overlay(
+    close: pd.Series,
+    raw_position: pd.Series,
+    stop_loss_pct: float | None,
+    take_profit_pct: float | None,
 ) -> pd.Series:
     """
-    Overlay a trailing stop on a raw long/flat position series: once long,
-    exit early — before the raw signal itself would exit — if price falls
-    more than ``stop_loss_pct`` from the highest close seen since entry.
-    Stays flat for the remainder of that raw signal's run (until the raw
-    position drops back to 0, i.e. a fresh entry decision) rather than
-    immediately re-buying into the same stop.
+    Overlay an optional trailing stop and/or take-profit target on a raw
+    long/flat position series. Once long, exit early — before the raw
+    signal itself would exit on trend-reversal — if price falls more than
+    ``stop_loss_pct`` below the highest close seen since entry (a trailing
+    stop), or rises more than ``take_profit_pct`` above the entry price (a
+    fixed target that locks in a gain instead of riding out every
+    pullback along the way to trend-reversal). Either can be disabled by
+    passing ``None``. Stays flat for the remainder of that raw signal's
+    run — until the raw position drops back to 0, i.e. a fresh entry
+    decision — rather than immediately re-buying into the same exit.
     """
     position = np.zeros(len(close), dtype=int)
     in_position = False
-    stopped_out = False
+    closed_out = False
+    entry_price = None
     trailing_high = None
     raw = raw_position.astype(int).to_numpy()
     prices = close.to_numpy()
@@ -106,12 +114,25 @@ def _apply_trailing_stop(
     for i in range(len(close)):
         if raw[i] == 0:
             in_position = False
-            stopped_out = False
+            closed_out = False
+            entry_price = None
             trailing_high = None
-        elif not stopped_out:
-            trailing_high = prices[i] if trailing_high is None else max(trailing_high, prices[i])
-            if prices[i] <= trailing_high * (1 - stop_loss_pct):
-                stopped_out = True
+        elif not closed_out:
+            if entry_price is None:
+                entry_price = prices[i]
+                trailing_high = prices[i]
+            else:
+                trailing_high = max(trailing_high, prices[i])
+
+            hit_stop = stop_loss_pct is not None and prices[i] <= trailing_high * (
+                1 - stop_loss_pct
+            )
+            hit_target = take_profit_pct is not None and prices[i] >= entry_price * (
+                1 + take_profit_pct
+            )
+
+            if hit_stop or hit_target:
+                closed_out = True
                 in_position = False
             else:
                 in_position = True
@@ -154,6 +175,7 @@ def backtest(
     risk_free_rate: float = 0.0,
     trading_days_per_year: int = TRADING_DAYS_PER_YEAR,
     stop_loss_pct: float | None = 0.08,
+    take_profit_pct: float | None = None,
 ) -> BacktestResult:
     """
     Backtest the ``position`` column from ``generate_signals`` against
@@ -161,23 +183,37 @@ def backtest(
     lag to avoid look-ahead bias).
 
     ``stop_loss_pct`` (default 8%) overlays a trailing stop on top of the
-    raw signal — see ``_apply_trailing_stop`` — to cut losing trades short
-    instead of riding them out to the next trend-reversal exit. Pass
-    ``None`` to disable it and use the raw signal's position unmodified.
+    raw signal to cut losing trades short instead of riding them out to the
+    next trend-reversal exit. ``take_profit_pct`` (default: disabled)
+    optionally overlays a fixed target that locks in a gain once price has
+    risen that far above entry, instead of giving it all back on the
+    pullback that eventually triggers the trend-reversal exit — the
+    intended lever for raising the per-day win rate specifically, since it
+    converts "still winning overall but red today" days into closed-out
+    green ones. In practice, on synthetic backtests across many random
+    seeds, it moved the per-day win rate by well under a percentage point
+    while cutting average total return by roughly 10 points — it gives up
+    the rare large trend run for almost no win-rate benefit. It's kept
+    here as an opt-in experiment, not a default, precisely because it
+    doesn't hold up: pushing per-day win rate up this way is fighting the
+    strategy's own trend-following nature rather than improving it. See
+    ``_apply_exit_overlay``. Pass either as ``None`` to disable it and fall
+    back to the raw signal's position unmodified for that exit rule.
 
-    Two win-rate figures are returned: ``win_rate`` is the historically
-    reported per-day figure (naturally low for trend-following, since a
-    single profitable trade still contains plenty of red days along the
-    way); ``trade_win_rate`` is the fraction of complete entry-to-exit
-    trades that were net profitable, usually a more honest read on whether
-    the signal "works".
+    Two win-rate figures are returned: ``win_rate`` is the per-day figure
+    (naturally low for trend-following, since a single profitable trade
+    still contains plenty of red days along the way); ``trade_win_rate`` is
+    the fraction of complete entry-to-exit trades that were net
+    profitable, usually a more honest read on whether the signal "works".
     """
     close = df_with_signals["Close"]
     daily_returns = close.pct_change().fillna(0)
     raw_position = df_with_signals["position"]
 
-    if stop_loss_pct is not None:
-        effective_position = _apply_trailing_stop(close, raw_position, stop_loss_pct)
+    if stop_loss_pct is not None or take_profit_pct is not None:
+        effective_position = _apply_exit_overlay(
+            close, raw_position, stop_loss_pct, take_profit_pct
+        )
     else:
         effective_position = raw_position
 
