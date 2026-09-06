@@ -15,10 +15,21 @@ from __future__ import annotations
 import argparse
 import sys
 
+import pandas as pd
+
 from .charts import build_candlestick_chart, save_chart_html
 from .data import DataFetchError, single_ticker_ohlcv
 from .options import OptionInputs, price_option
+from .outlet_segmentation import format_report as format_segmentation_report
+from .outlet_segmentation import segment_outlets
+from .promotion_impact import (
+    compare_before_after,
+    compare_campaign_vs_control,
+    format_ttest_report,
+)
 from .sensitivity import analyze_portfolio_sensitivity, format_report
+from .shelf_sensitivity import analyze_sensitivity
+from .shelf_sensitivity import format_report as format_shelf_report
 from .signals import backtest, generate_signals
 
 
@@ -82,6 +93,35 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     print(f"  Win rate (active days):   {result.win_rate:.2%}")
 
 
+def cmd_promo_ttest(args: argparse.Namespace) -> None:
+    if not args.control and not args.before:
+        raise SystemExit("Provide either --before (paired test) or --control (independent test)")
+    df = pd.read_csv(args.csv)
+    if args.control:
+        result = compare_campaign_vs_control(df[args.after], df[args.control])
+    else:
+        result = compare_before_after(df[args.before], df[args.after])
+    print(format_ttest_report(result))
+
+
+def cmd_shelf(args: argparse.Namespace) -> None:
+    df = pd.read_csv(args.csv)
+    result = analyze_sensitivity(df[args.x], df[args.y], x_label=args.x, y_label=args.y)
+    print(format_shelf_report(result))
+    if args.predict is not None:
+        from .shelf_sensitivity import predict as predict_y
+
+        print(f"\nPredicted {args.y} at {args.x}={args.predict}: {predict_y(result, args.predict):.3f}")
+
+
+def cmd_segment(args: argparse.Namespace) -> None:
+    df = pd.read_csv(args.csv)
+    result = segment_outlets(
+        df, features=args.features, n_clusters=args.clusters, id_column=args.id_column
+    )
+    print(format_segmentation_report(result))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trade_marketing_tool",
@@ -116,6 +156,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_bt.add_argument("ticker")
     p_bt.add_argument("--period", default="2y")
     p_bt.set_defaults(func=cmd_backtest)
+
+    p_promo = sub.add_parser(
+        "promo-ttest", help="Trade-promotion impact: paired or control-group t-test"
+    )
+    p_promo.add_argument("--csv", required=True, help="CSV with outlet-level sales columns")
+    p_promo.add_argument("--before", help="Column: pre-campaign sales (paired test)")
+    p_promo.add_argument("--after", required=True, help="Column: post-campaign / treatment sales")
+    p_promo.add_argument(
+        "--control", help="Column: control-group sales (independent-samples test instead of paired)"
+    )
+    p_promo.set_defaults(func=cmd_promo_ttest)
+
+    p_shelf = sub.add_parser(
+        "shelf", help="Correlation + regression of sales against shelf space, price, etc."
+    )
+    p_shelf.add_argument("--csv", required=True)
+    p_shelf.add_argument("--x", required=True, help="Explanatory column, e.g. shelf_space")
+    p_shelf.add_argument("--y", required=True, help="Response column, e.g. sales")
+    p_shelf.add_argument("--predict", type=float, default=None, help="Predict Y at this X value")
+    p_shelf.set_defaults(func=cmd_shelf)
+
+    p_seg = sub.add_parser(
+        "segment", help="Segment outlets/distributors via PCA + K-Means clustering"
+    )
+    p_seg.add_argument("--csv", required=True)
+    p_seg.add_argument("--features", nargs="+", required=True, help="Numeric columns to cluster on")
+    p_seg.add_argument("--clusters", type=int, default=3)
+    p_seg.add_argument("--id-column", dest="id_column", default=None)
+    p_seg.set_defaults(func=cmd_segment)
 
     return parser
 

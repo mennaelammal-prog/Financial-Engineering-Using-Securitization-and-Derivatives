@@ -12,6 +12,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 # Streamlit executes this file as a standalone script rather than as part of
@@ -24,7 +26,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from trade_marketing_tool.charts import build_candlestick_chart
 from trade_marketing_tool.data import DataFetchError, single_ticker_ohlcv
 from trade_marketing_tool.options import OptionInputs, price_option
+from trade_marketing_tool.outlet_segmentation import segment_outlets
+from trade_marketing_tool.promotion_impact import compare_before_after, compare_campaign_vs_control
 from trade_marketing_tool.sensitivity import analyze_portfolio_sensitivity
+from trade_marketing_tool.shelf_sensitivity import analyze_sensitivity, predict as predict_shelf
 from trade_marketing_tool.signals import backtest, generate_signals
 
 st.set_page_config(
@@ -38,8 +43,24 @@ st.caption(
     "Securitization and Derivatives*."
 )
 
-tab_chart, tab_sensitivity, tab_options, tab_signals = st.tabs(
-    ["TradingView Chart", "Portfolio Sensitivity", "Options Pricer", "Trade Signals"]
+(
+    tab_chart,
+    tab_sensitivity,
+    tab_options,
+    tab_signals,
+    tab_promo,
+    tab_shelf,
+    tab_segment,
+) = st.tabs(
+    [
+        "TradingView Chart",
+        "Portfolio Sensitivity",
+        "Options Pricer",
+        "Trade Signals",
+        "Promotion Impact",
+        "Shelf/Price Sensitivity",
+        "Outlet Segmentation",
+    ]
 )
 
 # ----------------------------------------------------------------------
@@ -182,4 +203,138 @@ with tab_signals:
                 "and MACD crossovers. Educational/research use — not investment advice."
             )
         except DataFetchError as exc:
+            st.error(str(exc))
+
+# ----------------------------------------------------------------------
+# Tab 5: Promotion impact (t-test)
+# ----------------------------------------------------------------------
+with tab_promo:
+    st.caption(
+        "Applied-statistics chapters (mean-difference tests) of *Analytical "
+        "Statistics with SPSS Applications*, applied to trade-promotion sales."
+    )
+    default_promo = pd.DataFrame(
+        {
+            "outlet": [f"P{i}" for i in range(1, 9)],
+            "before": [12, 15, 8, 22, 18, 10, 14, 20],
+            "after": [15, 19, 9, 27, 23, 11, 17, 24],
+        }
+    )
+    promo_df = st.data_editor(default_promo, num_rows="dynamic", key="promo_editor")
+    mode = st.radio(
+        "Comparison type", ["Paired (before vs. after)", "Independent (campaign vs. control)"],
+        horizontal=True,
+    )
+
+    if st.button("Run test", key="run_promo"):
+        try:
+            if mode.startswith("Paired"):
+                result = compare_before_after(promo_df["before"], promo_df["after"])
+            else:
+                result = compare_campaign_vs_control(promo_df["after"], promo_df["before"])
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Mean before/control", f"{result.mean_before:.2f}")
+            c2.metric("Mean after/campaign", f"{result.mean_after:.2f}")
+            c3.metric("Uplift", f"{result.uplift:+.2f} ({result.uplift_pct:+.1%})")
+
+            c4, c5 = st.columns(2)
+            c4.metric("t-statistic", f"{result.t_statistic:.3f}")
+            c5.metric("p-value", f"{result.p_value:.4f}")
+
+            if result.significant:
+                st.success(f"Statistically significant at alpha={result.alpha} — the promotion moved sales.")
+            else:
+                st.warning(f"Not statistically significant at alpha={result.alpha}.")
+
+            chart_df = pd.DataFrame(
+                {"Group": [mode.split(" ")[0], "After/Campaign"], "Mean": [result.mean_before, result.mean_after]}
+            )
+            st.plotly_chart(px.bar(chart_df, x="Group", y="Mean"), use_container_width=True)
+        except ValueError as exc:
+            st.error(str(exc))
+
+# ----------------------------------------------------------------------
+# Tab 6: Shelf/price sensitivity (correlation + regression)
+# ----------------------------------------------------------------------
+with tab_shelf:
+    st.caption(
+        "Correlation/regression chapters of *Analytical Statistics with SPSS "
+        "Applications*: how strongly does a trade lever (shelf space, price, "
+        "display type) move sales, and by how much per unit?"
+    )
+    default_shelf = pd.DataFrame(
+        {
+            "outlet": [f"P{i}" for i in range(1, 11)],
+            "shelf_space": [2.5, 3.0, 1.5, 4.0, 3.5, 2.0, 3.2, 1.8, 4.5, 2.8],
+            "sales": [12, 15, 8, 22, 18, 10, 16, 9, 25, 13],
+        }
+    )
+    shelf_df = st.data_editor(default_shelf, num_rows="dynamic", key="shelf_editor")
+    x_col = st.selectbox("X (explanatory)", [c for c in shelf_df.columns if c != "outlet"], index=0)
+    y_col = st.selectbox("Y (response)", [c for c in shelf_df.columns if c != "outlet"], index=1)
+
+    if st.button("Fit regression", key="run_shelf"):
+        try:
+            result = analyze_sensitivity(shelf_df[x_col], shelf_df[y_col], x_label=x_col, y_label=y_col)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Pearson r", f"{result.r:.4f}")
+            c2.metric("R-squared", f"{result.r_squared:.4f}")
+            c3.metric("Slope p-value", f"{result.p_value:.4f}")
+            st.write(f"**Equation:** {y_col} = {result.intercept:.3f} + {result.slope:.3f} × {x_col}")
+
+            fig = px.scatter(shelf_df, x=x_col, y=y_col, trendline="ols")
+            st.plotly_chart(fig, use_container_width=True)
+
+            predict_x = st.number_input(f"Predict {y_col} at {x_col} =", value=float(shelf_df[x_col].mean()))
+            st.metric(f"Predicted {y_col}", f"{predict_shelf(result, predict_x):.2f}")
+        except ValueError as exc:
+            st.error(str(exc))
+
+# ----------------------------------------------------------------------
+# Tab 7: Outlet segmentation (PCA + K-Means)
+# ----------------------------------------------------------------------
+with tab_segment:
+    st.caption(
+        "Cluster/factor-analysis chapter of *Analytical Statistics with SPSS "
+        "Applications*: group outlets/distributors by behavior to target the "
+        "most profitable segment."
+    )
+    default_seg = pd.DataFrame(
+        {
+            "outlet": [f"P{i}" for i in range(1, 11)],
+            "sales_volume": [12, 15, 8, 22, 18, 10, 16, 9, 25, 13],
+            "basket_size": [45, 52, 30, 65, 58, 38, 50, 33, 70, 47],
+            "footfall": [300, 340, 210, 420, 380, 260, 330, 220, 460, 310],
+        }
+    )
+    seg_df = st.data_editor(default_seg, num_rows="dynamic", key="seg_editor")
+    feature_cols = st.multiselect(
+        "Features to cluster on",
+        [c for c in seg_df.columns if c != "outlet"],
+        default=[c for c in seg_df.columns if c != "outlet"],
+    )
+    n_clusters = st.slider("Number of segments", min_value=2, max_value=5, value=3)
+
+    if st.button("Segment outlets", key="run_segment"):
+        try:
+            result = segment_outlets(
+                seg_df, features=feature_cols, n_clusters=n_clusters, id_column="outlet"
+            )
+            st.subheader("Cluster profile")
+            st.dataframe(result.cluster_profile, use_container_width=True)
+
+            st.subheader("Outlet assignments")
+            st.dataframe(result.assignments, use_container_width=True)
+
+            if len(feature_cols) >= 2:
+                fig = px.scatter(
+                    result.assignments,
+                    x=feature_cols[0],
+                    y=feature_cols[1],
+                    color="Segment",
+                    hover_data=["outlet"] if "outlet" in result.assignments.columns else None,
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        except ValueError as exc:
             st.error(str(exc))
