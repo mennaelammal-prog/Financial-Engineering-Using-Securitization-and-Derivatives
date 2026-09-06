@@ -9,13 +9,23 @@ Run with:
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import streamlit as st
 
-from .charts import build_candlestick_chart
-from .data import DataFetchError, single_ticker_ohlcv
-from .options import OptionInputs, price_option
-from .sensitivity import analyze_portfolio_sensitivity
-from .signals import backtest, generate_signals
+# Streamlit executes this file as a standalone script rather than as part of
+# the `trade_marketing_tool` package, so relative imports (`from .charts import
+# ...`) fail with "attempted relative import with no known parent package".
+# Put the project root on sys.path and import with the full package path
+# instead — this works whether or not the package has been pip-installed.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from trade_marketing_tool.charts import build_candlestick_chart
+from trade_marketing_tool.data import DataFetchError, single_ticker_ohlcv
+from trade_marketing_tool.options import OptionInputs, price_option
+from trade_marketing_tool.sensitivity import analyze_portfolio_sensitivity
+from trade_marketing_tool.signals import backtest, generate_signals
 
 st.set_page_config(
     page_title="Share & Index Analytics Workbench", layout="wide", page_icon="📈"
